@@ -136,6 +136,116 @@ class PHALP(nn.Module):
         except: 
             pass
         
+    def get_embeddings(self):
+        eval_keys       = ['tracked_ids', 'tracked_bbox', 'tid', 'bbox', 'tracked_time']
+        history_keys    = ['appe', 'loca', 'pose', 'uv'] if self.cfg.render.enable else []
+        prediction_keys = ['prediction_uv', 'prediction_pose', 'prediction_loca'] if self.cfg.render.enable else []
+        extra_keys_1    = ['center', 'scale', 'size', 'img_path', 'img_name', 'class_name', 'conf', 'annotations']
+        extra_keys_2    = ['smpl', 'camera', 'camera_bbox', '3d_joints', '2d_joints', 'mask', 'extra_data']
+        history_keys    = history_keys + extra_keys_1 + extra_keys_2
+        visual_store_   = eval_keys + history_keys + prediction_keys
+        tmp_keys_       = ['uv', 'prediction_uv', 'prediction_pose', 'prediction_loca']
+        
+        # process the source video and return a list of frames
+        # source can be a video file, a youtube link or a image folder
+        io_data = self.io_manager.get_frames_from_source()
+        list_of_frames, additional_data = io_data['list_of_frames'], io_data['additional_data']
+        self.cfg.video_seq = io_data['video_name']
+        pkl_path = self.cfg.video.output_dir + '/results/' + self.cfg.track_dataset + "_" + str(self.cfg.video_seq) + '.pkl'
+        video_path = self.cfg.video.output_dir + '/' + self.cfg.base_tracker + '_' + str(self.cfg.video_seq) + '.mp4'
+        
+        # check if the video is already processed                                  
+        if(not(self.cfg.overwrite) and os.path.isfile(pkl_path)): 
+            return 0
+        
+        # eval mode
+        self.eval()
+        
+        # setup rendering, deep sort and directory structure
+        self.setup_deepsort()
+        self.default_setup()
+        
+        log.info("Saving tracks at : " + self.cfg.video.output_dir + '/results/' + str(self.cfg.video_seq))
+        
+        try: 
+            
+            list_of_frames = list_of_frames if self.cfg.phalp.start_frame==-1 else list_of_frames[self.cfg.phalp.start_frame:self.cfg.phalp.end_frame]
+            list_of_shots = self.get_list_of_shots(list_of_frames)
+            
+            tracked_frames = []
+            final_visuals_dic = {}
+            
+            for t_, frame_name in progress_bar(enumerate(list_of_frames), description="Tracking : " + self.cfg.video_seq, total=len(list_of_frames), disable=False):
+                
+                image_frame               = self.io_manager.read_frame(frame_name)
+                img_height, img_width, _  = image_frame.shape
+                new_image_size            = max(img_height, img_width)
+                top, left                 = (new_image_size - img_height)//2, (new_image_size - img_width)//2,
+                measurments               = [img_height, img_width, new_image_size, left, top]
+                self.cfg.phalp.shot       = 1 if t_ in list_of_shots else 0
+
+                if(self.cfg.render.enable):
+                    # reset the renderer
+                    # TODO: add a flag for full resolution rendering
+                    self.cfg.render.up_scale = int(self.cfg.render.output_resolution / self.cfg.render.res)
+                    self.visualizer.reset_render(self.cfg.render.res*self.cfg.render.up_scale)
+                
+                ############ detection ##############
+                pred_bbox, pred_bbox_pad, pred_masks, pred_scores, pred_classes, gt_tids, gt_annots = self.get_detections(image_frame, frame_name, t_, additional_data, measurments)
+
+                ############ Run EXTRA models to attach to the detections ##############
+                extra_data = self.run_additional_models(image_frame, pred_bbox, pred_masks, pred_scores, pred_classes, frame_name, t_, measurments, gt_tids, gt_annots)
+                
+                ############ HMAR ##############
+                detections = self.get_human_features(image_frame, pred_masks, pred_bbox, pred_bbox_pad, pred_scores, frame_name, pred_classes, t_, measurments, gt_tids, gt_annots, extra_data)
+
+                ############ tracking ##############
+                self.tracker.predict()
+                self.tracker.update(detections, t_, frame_name, self.cfg.phalp.shot)
+
+                ############ record the results ##############
+                final_visuals_dic.setdefault(frame_name, {'time': t_, 'shot': self.cfg.phalp.shot, 'frame_path': frame_name})
+                if(self.cfg.render.enable): final_visuals_dic[frame_name]['frame'] = image_frame
+                for key_ in visual_store_: final_visuals_dic[frame_name][key_] = []
+                
+                ############ record the track states (history and predictions) ##############
+                for tracks_ in self.tracker.tracks:
+                    if(frame_name not in tracked_frames): tracked_frames.append(frame_name)
+                    if(not(tracks_.is_confirmed())): continue
+                    
+                    track_id        = tracks_.track_id
+                    track_data_hist = tracks_.track_data['history'][-1]
+                    track_data_pred = tracks_.track_data['prediction']
+
+                    final_visuals_dic[frame_name]['tid'].append(track_id)
+                    final_visuals_dic[frame_name]['bbox'].append(track_data_hist['bbox'])
+                    final_visuals_dic[frame_name]['tracked_time'].append(tracks_.time_since_update)
+
+                    for hkey_ in history_keys:     final_visuals_dic[frame_name][hkey_].append(track_data_hist[hkey_])
+                    for pkey_ in prediction_keys:  final_visuals_dic[frame_name][pkey_].append(track_data_pred[pkey_.split('_')[1]][-1])
+
+                    if(tracks_.time_since_update==0):
+                        final_visuals_dic[frame_name]['tracked_ids'].append(track_id)
+                        final_visuals_dic[frame_name]['tracked_bbox'].append(track_data_hist['bbox'])
+                        
+                        if(tracks_.hits==self.cfg.phalp.n_init):
+                            for pt in range(self.cfg.phalp.n_init-1):
+                                track_data_hist_ = tracks_.track_data['history'][-2-pt]
+                                track_data_pred_ = tracks_.track_data['prediction']
+                                frame_name_      = tracked_frames[-2-pt]
+                                final_visuals_dic[frame_name_]['tid'].append(track_id)
+                                final_visuals_dic[frame_name_]['bbox'].append(track_data_hist_['bbox'])
+                                final_visuals_dic[frame_name_]['tracked_ids'].append(track_id)
+                                final_visuals_dic[frame_name_]['tracked_bbox'].append(track_data_hist_['bbox'])
+                                final_visuals_dic[frame_name_]['tracked_time'].append(0)
+
+                                for hkey_ in history_keys:    final_visuals_dic[frame_name_][hkey_].append(track_data_hist_[hkey_])
+                                for pkey_ in prediction_keys: final_visuals_dic[frame_name_][pkey_].append(track_data_pred_[pkey_.split('_')[1]][-1])
+            return final_visuals_dic, pkl_path
+        except Exception as e: 
+            print(e)
+            print(traceback.format_exc())         
+        
     def track(self):
         
         eval_keys       = ['tracked_ids', 'tracked_bbox', 'tid', 'bbox', 'tracked_time']
