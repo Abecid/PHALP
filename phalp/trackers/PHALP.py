@@ -45,6 +45,9 @@ class PHALP(nn.Module):
         self.cfg = cfg
         self.device = torch.device(self.cfg.device)
         self.io_manager = IO_Manager(self.cfg)
+        
+        self.subject_durations = {}  # Tracks duration each subject is present
+        self.subject_areas = {}
 
         # download wights and configs from Google Drive
         self.cached_download_from_drive()
@@ -136,6 +139,84 @@ class PHALP(nn.Module):
         except: 
             pass
         
+    def update_tracking_information(self, detection):
+        subject_id = detection.subject_id  # Define how to get subject_id from detection
+        bbox_area = (detection.bbox[2] - detection.bbox[0]) * (detection.bbox[3] - detection.bbox[1])
+
+        # Update duration
+        self.subject_durations[subject_id] = self.subject_durations.get(subject_id, 0) + 1
+
+        # Update area (average area across all appearances)
+        current_area = self.subject_areas.get(subject_id, 0)
+        new_area = (current_area * (self.subject_durations[subject_id] - 1) + bbox_area) / self.subject_durations[subject_id]
+        self.subject_areas[subject_id] = new_area
+        
+    def determine_primary_subject(self):
+        # Sort subjects by duration, then by area
+        sorted_subjects = sorted(self.subject_durations.items(), key=lambda x: (x[1], self.subject_areas[x[0]]), reverse=True)
+        
+        # Return the ID of the subject with the longest duration and largest area
+        return sorted_subjects[0][0] if sorted_subjects else None
+    
+    def get_primary_visualsdic(self, final_visuals_dic, primary_subject_id):
+        for frame_name in final_visuals_dic:
+            frame_data = final_visuals_dic[frame_name]
+
+            # Initialize filtered data with common keys
+            filtered_data = {key: frame_data[key] for key in ['time', 'shot', 'frame_path', 'frame']}
+
+            # Add the list of keys that need to be filtered based on 'primary_subject_id'
+            keys_to_filter = ['tid', 'bbox', 'tracked_time', 'tracked_ids', 'mask', 'smpl', 'camera', 'uv', 'prediction_uv']
+
+            # Filter each of these keys
+            for key in keys_to_filter:
+                if key in frame_data:
+                    filtered_data[key] = [item for i, item in enumerate(frame_data[key]) if frame_data['tid'][i] == primary_subject_id]
+
+            # Special handling for 'label' key if it exists and requires filtering
+            # Example: filtered_data['label'] = ...
+
+            final_visuals_dic[frame_name] = filtered_data
+
+        return final_visuals_dic
+    
+    def get_primary_visualsdic_old(self, final_visuals_dic, primary_subject_id):
+        for frame_name in final_visuals_dic:
+            frame_data = final_visuals_dic[frame_name]
+
+            # Filter for primary subject
+            filtered_data = {
+                key: [item for i, item in enumerate(value) if frame_data['tid'][i] == primary_subject_id]
+                for key, value in frame_data.items() if key not in ['time', 'shot', 'frame_path', 'frame']
+            }
+
+            # Keep the common data
+            for key in ['time', 'shot', 'frame_path', 'frame']:
+                filtered_data[key] = frame_data[key]
+
+            final_visuals_dic[frame_name] = filtered_data
+        
+        return final_visuals_dic
+    
+    def save_video_with_primary_subject_tracking(self,list_of_frames, final_visuals_dic, tmp_keys_, video_path):
+        t_ = len(list_of_frames) - 1
+        d_ = self.cfg.phalp.n_init+1 if(t_+1==len(list_of_frames)) else 1
+        for t__ in range(t_, t_+d_):
+
+            frame_key = list_of_frames[t__-self.cfg.phalp.n_init]
+            rendered_, f_size = self.visualizer.render_video(final_visuals_dic[frame_key])      
+
+            # save the rendered frame
+            self.io_manager.save_video(video_path, rendered_, f_size, t=t__-self.cfg.phalp.n_init)
+
+            # delete the frame after rendering it
+            del final_visuals_dic[frame_key]['frame']
+            
+            # delete unnecessary keys
+            for tkey_ in tmp_keys_:  
+                del final_visuals_dic[frame_key][tkey_] 
+
+    
     def get_embeddings(self):
         eval_keys       = ['tracked_ids', 'tracked_bbox', 'tid', 'bbox', 'tracked_time']
         history_keys    = ['appe', 'loca', 'pose', 'uv'] if self.cfg.render.enable else []
@@ -264,6 +345,7 @@ class PHALP(nn.Module):
         self.cfg.video_seq = io_data['video_name']
         pkl_path = self.cfg.video.output_dir + '/results/' + self.cfg.track_dataset + "_" + str(self.cfg.video_seq) + '.pkl'
         video_path = self.cfg.video.output_dir + '/' + self.cfg.base_tracker + '_' + str(self.cfg.video_seq) + '.mp4'
+        primary_video_path = video_path.replace('.mp4', '_primary.mp4')
         
         # check if the video is already processed                                  
         if(not(self.cfg.overwrite) and os.path.isfile(pkl_path)): 
@@ -309,6 +391,12 @@ class PHALP(nn.Module):
                 
                 ############ HMAR ##############
                 detections = self.get_human_features(image_frame, pred_masks, pred_bbox, pred_bbox_pad, pred_scores, frame_name, pred_classes, t_, measurments, gt_tids, gt_annots, extra_data)
+                
+                for detection in detections:
+                        self.update_tracking_information(detection)
+                
+                # primary_subject_id = self.identify_primary_subject()
+                # primary_detections = [d for d in detections if d.subject_id == primary_subject_id]
 
                 ############ tracking ##############
                 self.tracker.predict()
@@ -365,12 +453,39 @@ class PHALP(nn.Module):
                         self.io_manager.save_video(video_path, rendered_, f_size, t=t__-self.cfg.phalp.n_init)
 
                         # delete the frame after rendering it
+                        # del final_visuals_dic[frame_key]['frame']
+                        
+                        # delete unnecessary keys
+                        # for tkey_ in tmp_keys_:  
+                        #     del final_visuals_dic[frame_key][tkey_] 
+
+            # After processing all frames, determine the primary subject
+            primary_subject_id = self.determine_primary_subject()
+
+            # Filter final_visuals_dic to only include the primary subject
+            primary_visuals_dic = self.get_primary_visualsdic(final_visuals_dic, primary_subject_id)
+            
+            for t_, frame_name in progress_bar(enumerate(list_of_frames), description="Tracking : " + self.cfg.video_seq, total=len(list_of_frames), disable=False):
+                ############ save the video ##############
+                if(self.cfg.render.enable and t_>=self.cfg.phalp.n_init):                    
+                    d_ = self.cfg.phalp.n_init+1 if(t_+1==len(list_of_frames)) else 1
+                    for t__ in range(t_, t_+d_):
+
+                        frame_key = list_of_frames[t__-self.cfg.phalp.n_init]
+                        rendered_, f_size = self.visualizer.render_video(primary_visuals_dic[frame_key])      
+
+                        # save the rendered frame
+                        self.io_manager.save_video(primary_video_path, rendered_, f_size, t=t__-self.cfg.phalp.n_init)
+
+                        # delete the frame after rendering it
+                        del primary_visuals_dic[frame_key]['frame']
                         del final_visuals_dic[frame_key]['frame']
                         
                         # delete unnecessary keys
                         for tkey_ in tmp_keys_:  
-                            del final_visuals_dic[frame_key][tkey_] 
-
+                            del primary_visuals_dic[frame_key][tkey_] 
+                            del final_visuals_dic[frame_key][tkey_]
+            
             joblib.dump(final_visuals_dic, pkl_path, compress=3)
             self.io_manager.close_video()
             if(self.cfg.use_gt): joblib.dump(self.tracker.tracked_cost, self.cfg.video.output_dir + '/results/' + str(self.cfg.video_seq) + '_' + str(self.cfg.phalp.start_frame) + '_distance.pkl')
