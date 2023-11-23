@@ -148,10 +148,10 @@ class PHALP(nn.Module):
         track_data_hist = tracks_.track_data['history'][-1]
 
         bbox = track_data_hist['bbox']
-        print(f"Track {track_id} bbox: {bbox}")
+        # print(f"Track {track_id} bbox: {bbox}")
         
-        bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-        # bbox_area = bbox[2] * bbox[3]
+        # bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+        bbox_area = bbox[2] * bbox[3]
 
         # Update duration
         self.subject_durations[track_id] = self.subject_durations.get(track_id, 0) + 1
@@ -485,6 +485,13 @@ class PHALP(nn.Module):
                                 for hkey_ in history_keys:    final_visuals_dic[frame_name_][hkey_].append(track_data_hist_[hkey_])
                                 for pkey_ in prediction_keys: final_visuals_dic[frame_name_][pkey_].append(track_data_pred_[pkey_.split('_')[1]][-1])
 
+                index = len(list_of_frames) // 4
+                if t_ == index:
+                    print(f"Saved subject image")
+                    primary_subject_id = self.determine_primary_subject()
+                    primary_subject_frame = self.get_primary_frame_key(final_visuals_dic, primary_subject_id, frame_name)
+                    self.save_primary_subject_image(frame_name, primary_subject_frame, primary_image_path)
+
                 ############ save the video ##############
                 if(self.cfg.render.enable and t_>=self.cfg.phalp.n_init):                    
                     d_ = self.cfg.phalp.n_init+1 if(t_+1==len(list_of_frames)) else 1
@@ -495,12 +502,6 @@ class PHALP(nn.Module):
 
                         # save the rendered frame
                         self.io_manager.save_video(video_path, rendered_, f_size, t=t__-self.cfg.phalp.n_init)
-                        
-                        index = len(list_of_frames) / 4
-                        if t_ == index:
-                            primary_subject_id = self.determine_primary_subject()
-                            primary_subject_frame = self.get_primary_frame_key(final_visuals_dic, primary_subject_id, frame_key)
-                            self.save_primary_subject_image(frame_key, primary_subject_frame, primary_image_path)
 
                         # delete the frame after rendering it
                         del final_visuals_dic[frame_key]['frame']
