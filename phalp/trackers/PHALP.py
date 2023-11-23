@@ -142,10 +142,29 @@ class PHALP(nn.Module):
     def save_primary_subject_image(self, frame_key, primary_visuals_dic, primary_subject_filepath):
         rendered_, f_size = self.visualizer.render_video(primary_visuals_dic[frame_key])
         cv2.imwrite(primary_subject_filepath, rendered_)
+        
+    def update_subject_tracking(self, tracks_):
+        track_id        = tracks_.track_id
+        track_data_hist = tracks_.track_data['history'][-1]
+
+        bbox = track_data_hist['bbox']
+        print(f"Track {track_id} bbox: {bbox}")
+        
+        bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+        # bbox_area = bbox[2] * bbox[3]
+
+        # Update duration
+        self.subject_durations[track_id] = self.subject_durations.get(track_id, 0) + 1
+
+        # Update area (average area across all appearances)
+        current_area = self.subject_areas.get(track_id, 0)
+        new_area = (current_area * (self.subject_durations[track_id] - 1) + bbox_area) / self.subject_durations[track_id]
+        self.subject_areas[track_id] = new_area
     
     def update_tracking_information(self, detection):
         subject_id = detection.subject_id  # Define how to get subject_id from detection
-        bbox_area = (detection.bbox[2] - detection.bbox[0]) * (detection.bbox[3] - detection.bbox[1])
+        # bbox_area = (detection.bbox[2] - detection.bbox[0]) * (detection.bbox[3] - detection.bbox[1])
+        bbox_area = detection.bbox[2] * detection.bbox[3]
 
         # Update duration
         self.subject_durations[subject_id] = self.subject_durations.get(subject_id, 0) + 1
@@ -414,8 +433,8 @@ class PHALP(nn.Module):
                 ############ HMAR ##############
                 detections = self.get_human_features(image_frame, pred_masks, pred_bbox, pred_bbox_pad, pred_scores, frame_name, pred_classes, t_, measurments, gt_tids, gt_annots, extra_data)
                 
-                for detection in detections:
-                        self.update_tracking_information(detection)
+                # for detection in detections:
+                #         self.update_tracking_information(detection)
                 
                 # primary_subject_id = self.identify_primary_subject()
                 # primary_detections = [d for d in detections if d.subject_id == primary_subject_id]
@@ -428,6 +447,9 @@ class PHALP(nn.Module):
                 final_visuals_dic.setdefault(frame_name, {'time': t_, 'shot': self.cfg.phalp.shot, 'frame_path': frame_name})
                 if(self.cfg.render.enable): final_visuals_dic[frame_name]['frame'] = image_frame
                 for key_ in visual_store_: final_visuals_dic[frame_name][key_] = []
+                
+                for tracks_ in self.tracker.tracks:
+                    self.update_subject_tracking(tracks_)
                 
                 ############ record the track states (history and predictions) ##############
                 for tracks_ in self.tracker.tracks:
