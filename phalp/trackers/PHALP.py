@@ -490,7 +490,7 @@ class PHALP(nn.Module):
                     print(f"Saved subject image")
                     primary_subject_id = self.determine_primary_subject()
                     primary_subject_frame = self.get_primary_frame_key(final_visuals_dic, primary_subject_id, frame_name)
-                    self.save_primary_subject_image(frame_name, primary_subject_frame, primary_image_path)
+                    self.save_primary_subject_image(primary_subject_frame, primary_image_path)
 
                 ############ save the video ##############
                 if(self.cfg.render.enable and t_>=self.cfg.phalp.n_init):                    
