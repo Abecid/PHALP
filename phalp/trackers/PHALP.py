@@ -139,8 +139,8 @@ class PHALP(nn.Module):
         except: 
             pass
     
-    def save_primary_subject_image(self, frame_key, primary_visuals_dic, primary_subject_filepath):
-        rendered_, f_size = self.visualizer.render_video(primary_visuals_dic[frame_key])
+    def save_primary_subject_image(self, primary_subject_frame, primary_subject_filepath):
+        rendered_, f_size = self.visualizer.render_video(primary_subject_frame)
         cv2.imwrite(primary_subject_filepath, rendered_)
         
     def update_subject_tracking(self, tracks_):
