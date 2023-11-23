@@ -138,7 +138,11 @@ class PHALP(nn.Module):
             os.makedirs(self.cfg.video.output_dir + '/_DEMO', exist_ok=True)  
         except: 
             pass
-        
+    
+    def save_primary_subject_image(self, frame_key, primary_visuals_dic, primary_subject_filepath):
+        rendered_, f_size = self.visualizer.render_video(primary_visuals_dic[frame_key])
+        cv2.imwrite(primary_subject_filepath, rendered_)
+    
     def update_tracking_information(self, detection):
         subject_id = detection.subject_id  # Define how to get subject_id from detection
         bbox_area = (detection.bbox[2] - detection.bbox[0]) * (detection.bbox[3] - detection.bbox[1])
@@ -157,6 +161,23 @@ class PHALP(nn.Module):
         
         # Return the ID of the subject with the longest duration and largest area
         return sorted_subjects[0][0] if sorted_subjects else None
+    
+    def get_primary_frame_key(self, final_visuals_dic, primary_subject_id, frame_name):
+        frame_data = final_visuals_dic[frame_name]
+        
+        # Initialize filtered data with common keys
+        filtered_data = {key: frame_data[key] for key in ['time', 'shot', 'frame_path', 'frame']}
+
+        # Add the list of keys that need to be filtered based on 'primary_subject_id'
+        keys_to_filter = ['tid', 'bbox', 'tracked_time', 'tracked_ids', 'mask', 'smpl', 'camera', 'uv', 'prediction_uv']
+
+        # Filter each of these keys
+        for key in keys_to_filter:
+            if key in frame_data:
+                filtered_data[key] = [item for i, item in enumerate(frame_data[key]) if frame_data['tid'][i] == primary_subject_id]
+                
+        return filtered_data
+        
     
     def get_primary_visualsdic(self, final_visuals_dic, primary_subject_id):
         for frame_name in final_visuals_dic:
@@ -346,6 +367,7 @@ class PHALP(nn.Module):
         pkl_path = self.cfg.video.output_dir + '/results/' + self.cfg.track_dataset + "_" + str(self.cfg.video_seq) + '.pkl'
         video_path = self.cfg.video.output_dir + '/' + self.cfg.base_tracker + '_' + str(self.cfg.video_seq) + '.mp4'
         primary_video_path = video_path.replace('.mp4', '_primary.mp4')
+        primary_image_path = video_path.replace('.mp4', '_primary.jpg')
         
         # check if the video is already processed                                  
         if(not(self.cfg.overwrite) and os.path.isfile(pkl_path)): 
@@ -451,40 +473,48 @@ class PHALP(nn.Module):
 
                         # save the rendered frame
                         self.io_manager.save_video(video_path, rendered_, f_size, t=t__-self.cfg.phalp.n_init)
-
-                        # delete the frame after rendering it
-                        # del final_visuals_dic[frame_key]['frame']
                         
-                        # delete unnecessary keys
-                        # for tkey_ in tmp_keys_:  
-                        #     del final_visuals_dic[frame_key][tkey_] 
-
-            # After processing all frames, determine the primary subject
-            primary_subject_id = self.determine_primary_subject()
-
-            # Filter final_visuals_dic to only include the primary subject
-            primary_visuals_dic = self.get_primary_visualsdic(final_visuals_dic, primary_subject_id)
-            
-            for t_, frame_name in progress_bar(enumerate(list_of_frames), description="Tracking : " + self.cfg.video_seq, total=len(list_of_frames), disable=False):
-                ############ save the video ##############
-                if(self.cfg.render.enable and t_>=self.cfg.phalp.n_init):                    
-                    d_ = self.cfg.phalp.n_init+1 if(t_+1==len(list_of_frames)) else 1
-                    for t__ in range(t_, t_+d_):
-
-                        frame_key = list_of_frames[t__-self.cfg.phalp.n_init]
-                        rendered_, f_size = self.visualizer.render_video(primary_visuals_dic[frame_key])      
-
-                        # save the rendered frame
-                        self.io_manager.save_video(primary_video_path, rendered_, f_size, t=t__-self.cfg.phalp.n_init)
+                        index = len(list_of_frames) / 4
+                        if t_ == index:
+                            primary_subject_id = self.determine_primary_subject()
+                            primary_subject_frame = self.get_primary_frame_key(final_visuals_dic, primary_subject_id, frame_key)
+                            self.save_primary_subject_image(frame_key, primary_subject_frame, primary_image_path)
 
                         # delete the frame after rendering it
-                        del primary_visuals_dic[frame_key]['frame']
                         del final_visuals_dic[frame_key]['frame']
                         
                         # delete unnecessary keys
                         for tkey_ in tmp_keys_:  
-                            del primary_visuals_dic[frame_key][tkey_] 
-                            del final_visuals_dic[frame_key][tkey_]
+                            del final_visuals_dic[frame_key][tkey_] 
+
+            # After processing all frames, determine the primary subject
+            # primary_subject_id = self.determine_primary_subject()
+
+            # # Filter final_visuals_dic to only include the primary subject
+            # primary_visuals_dic = self.get_primary_visualsdic(final_visuals_dic, primary_subject_id)
+            
+            # self.save_primary_subject_image(list_of_frames, primary_visuals_dic, primary_video_path)
+            
+            # for t_, frame_name in progress_bar(enumerate(list_of_frames), description="Tracking : " + self.cfg.video_seq, total=len(list_of_frames), disable=False):
+            #     ############ save the video ##############
+            #     if(self.cfg.render.enable and t_>=self.cfg.phalp.n_init):                    
+            #         d_ = self.cfg.phalp.n_init+1 if(t_+1==len(list_of_frames)) else 1
+            #         for t__ in range(t_, t_+d_):
+
+            #             frame_key = list_of_frames[t__-self.cfg.phalp.n_init]
+            #             rendered_, f_size = self.visualizer.render_video(primary_visuals_dic[frame_key])      
+
+            #             # save the rendered frame
+            #             self.io_manager.save_video(primary_video_path, rendered_, f_size, t=t__-self.cfg.phalp.n_init)
+
+            #             # delete the frame after rendering it
+            #             del primary_visuals_dic[frame_key]['frame']
+            #             del final_visuals_dic[frame_key]['frame']
+                        
+            #             # delete unnecessary keys
+            #             for tkey_ in tmp_keys_:  
+            #                 del primary_visuals_dic[frame_key][tkey_] 
+            #                 del final_visuals_dic[frame_key][tkey_]
             
             joblib.dump(final_visuals_dic, pkl_path, compress=3)
             self.io_manager.close_video()
