@@ -35,6 +35,9 @@ from phalp.utils.utils_download import cache_url
 from phalp.visualize.postprocessor import Postprocessor
 from phalp.visualize.visualizer import Visualizer
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Device: {device}")
+
 log = get_pylogger(__name__)
 
 class PHALP(nn.Module):
@@ -190,6 +193,11 @@ class PHALP(nn.Module):
         # Add the list of keys that need to be filtered based on 'primary_subject_id'
         keys_to_filter = ['tid', 'bbox', 'tracked_time', 'tracked_ids', 'mask', 'smpl', 'camera', 'uv', 'prediction_uv']
 
+        smpl_embedding = [item for i, item in enumerate(frame_data['smpl']) if frame_data['tid'][i] == primary_subject_id][0]
+        print(f"SMPL embedding: {smpl_embedding}")
+        print(f"SMPL embedding shape: {smpl_embedding.shape}")
+        print(f"SMPL embedding first element: {smpl_embedding[0].shape}")
+        
         # Filter each of these keys
         for key in keys_to_filter:
             if key in frame_data:
