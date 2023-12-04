@@ -211,7 +211,7 @@ class PHALP(nn.Module):
         smpl_embeddings = []
         for frame in final_visuals_dic.keys():
             frame_data = final_visuals_dic[frame]
-            smpl_embedding = [item for i, item in enumerate(frame_data['smpl']['body_pose']) if frame_data['tid'][i] == primary_subject_id][0]
+            smpl_embedding = [item['body_pose'] for i, item in enumerate(frame_data['smpl']) if frame_data['tid'][i] == primary_subject_id][0]
             flattened_embedding = smpl_embedding.flatten()
             smpl_embeddings.append(flattened_embedding)
             # smpl_embeddings.append(smpl_embedding)
