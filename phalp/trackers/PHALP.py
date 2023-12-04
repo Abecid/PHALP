@@ -195,8 +195,10 @@ class PHALP(nn.Module):
 
         smpl_embedding = [item for i, item in enumerate(frame_data['smpl']) if frame_data['tid'][i] == primary_subject_id][0]
         print(f"SMPL embedding: {smpl_embedding}")
-        print(f"SMPL embedding shape: {smpl_embedding.shape}")
-        print(f"SMPL embedding first element: {smpl_embedding[0].shape}")
+        print(f"SMPL embedding shape: {smpl_embedding['body_pose'].shape}")
+        flattened_embedding = smpl_embedding['body_pose'].flatten()
+        print(f"Flattened embedding shape: {flattened_embedding.shape}")
+        # print(f"SMPL embedding first element: {smpl_embedding[0].shape}")
         
         # Filter each of these keys
         for key in keys_to_filter:
@@ -204,6 +206,19 @@ class PHALP(nn.Module):
                 filtered_data[key] = [item for i, item in enumerate(frame_data[key]) if frame_data['tid'][i] == primary_subject_id]
                 
         return filtered_data
+    
+    def save_smpl_embedding(self, final_visuals_dic, primary_subject_id, smpl_embedding_filepath):
+        smpl_embeddings = []
+        for frame in final_visuals_dic.keys():
+            frame_data = final_visuals_dic[frame]
+            smpl_embedding = [item for i, item in enumerate(frame_data['smpl']['body_pose']) if frame_data['tid'][i] == primary_subject_id][0]
+            flattened_embedding = smpl_embedding.flatten()
+            smpl_embeddings.append(flattened_embedding)
+            # smpl_embeddings.append(smpl_embedding)
+        smpl_embedding = np.array(smpl_embeddings)
+        
+        # Save smpl embedding
+        np.save(smpl_embedding_filepath, smpl_embedding)
         
     
     def get_primary_visualsdic(self, final_visuals_dic, primary_subject_id):
@@ -546,6 +561,9 @@ class PHALP(nn.Module):
             #             for tkey_ in tmp_keys_:  
             #                 del primary_visuals_dic[frame_key][tkey_] 
             #                 del final_visuals_dic[frame_key][tkey_]
+            
+            embedding_filepath = self.cfg.video.output_dir + '/smpl_results/' + str(self.cfg.video_seq) + '_' + str(self.cfg.phalp.start_frame) + '.npy'
+            self.save_smpl_embedding(final_visuals_dic, primary_subject_id, embedding_filepath)
             
             joblib.dump(final_visuals_dic, pkl_path, compress=3)
             self.io_manager.close_video()
