@@ -208,6 +208,8 @@ class PHALP(nn.Module):
         return filtered_data
     
     def save_smpl_embedding(self, final_visuals_dic, primary_subject_id, smpl_embedding_filepath):
+        os.makedirs(os.path.dirname(smpl_embedding_filepath), exist_ok=True)
+
         smpl_embeddings = []
         for frame in final_visuals_dic.keys():
             frame_data = final_visuals_dic[frame]
