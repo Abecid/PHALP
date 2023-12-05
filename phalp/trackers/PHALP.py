@@ -207,6 +207,13 @@ class PHALP(nn.Module):
                 
         return filtered_data
     
+    def save_video_metadata(self):
+        # Save fps
+        # Save total video length
+        # Save in json
+        # Save total number of frames
+        pass
+    
     def save_smpl_embedding(self, final_visuals_dic, primary_subject_id, smpl_embedding_filepath):
         os.makedirs(os.path.dirname(smpl_embedding_filepath), exist_ok=True)
 
@@ -564,7 +571,7 @@ class PHALP(nn.Module):
             #                 del primary_visuals_dic[frame_key][tkey_] 
             #                 del final_visuals_dic[frame_key][tkey_]
             
-            embedding_filepath = self.cfg.video.output_dir + '/smpl_results/' + str(self.cfg.video_seq) + '_' + str(self.cfg.phalp.start_frame) + '.npy'
+            embedding_filepath = self.cfg.video.output_dir + '/smpl_results/' + str(self.cfg.video_seq) + '.npy'
             self.save_smpl_embedding(final_visuals_dic, primary_subject_id, embedding_filepath)
             
             joblib.dump(final_visuals_dic, pkl_path, compress=3)
